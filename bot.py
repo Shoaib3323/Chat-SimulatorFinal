@@ -21,7 +21,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, filters
 API_ID = 20583673
 API_HASH = "4874dc139573317c2eebdb7b5936e72c"
 BOT_TOKEN = "8406407573:AAG_EYa5dVTELpV6SWLYNkss95uf9YMxxBY"
-OWNER_ID = 8458836085
+OWNER_ID = 5876736850
 
 # ===== GLOBAL STATE =====
 accounts: Dict[str, Tuple[str, TelegramClient]] = {}
