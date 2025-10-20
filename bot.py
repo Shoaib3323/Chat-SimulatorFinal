@@ -36,10 +36,11 @@ simulation_running = False
 simulation_task = None
 
 # Script conversation system
-conversation_scripts = {}  # Changed to dict: {script_num: script_lines}
-current_script_index = 0
-current_script_num = 0  # 0 = no script
+conversation_scripts = {}  # {script_num: script_lines}
 script_characters = {}  # {phone: character_name}
+script_execution_order = []  # List of (character_name, message) in script order
+current_script_position = 0  # Current position in script execution order
+current_script_num = 0  # 0 = no script
 script_completed = False  # Track if script has been completed
 
 # Reply-only mode settings
@@ -91,42 +92,58 @@ async def send_message_as_user(client: TelegramClient, group_identifier: str, me
             
         raise
 
-def get_next_script_message(phone: str):
-    """Get the next message from script for this character"""
-    global current_script_index, current_script_num, script_completed
+def parse_script_execution_order():
+    """Parse the script and create execution order"""
+    global script_execution_order, current_script_position
     
-    if not conversation_scripts or current_script_num == 0:
-        return None
-        
-    character_name = script_characters.get(phone)
-    if not character_name:
-        return None
-        
-    # Get current script
+    script_execution_order = []
     current_script = conversation_scripts.get(current_script_num, [])
-    if not current_script:
-        return None
     
-    # Find next message for this character in current script
-    for i in range(current_script_index, len(current_script)):
-        line = current_script[i]
-        if line.startswith(f"{character_name}:"):
-            current_script_index = i + 1
-            # If we reached the end of current script, try to move to next script
-            if current_script_index >= len(current_script):
-                # Find next available script
-                next_script_num = find_next_script(current_script_num)
-                if next_script_num:
-                    current_script_num = next_script_num
-                    current_script_index = 0
-                    script_completed = False
-                    print(f"📜 Moving to script {current_script_num}")
-                else:
-                    # No more scripts, mark as completed and stop simulation
-                    script_completed = True
-                    print("📜 All scripts completed, stopping simulation")
-                    return None
-            return line.split(":", 1)[1].strip()
+    for line in current_script:
+        if ':' in line:
+            character_name, message = line.split(':', 1)
+            character_name = character_name.strip()
+            message = message.strip()
+            script_execution_order.append((character_name, message))
+    
+    current_script_position = 0
+    print(f"📜 Parsed script execution order: {len(script_execution_order)} messages")
+
+def get_next_script_message():
+    """Get the next message from script in proper order"""
+    global current_script_position, current_script_num, script_completed
+    
+    if not script_execution_order or current_script_position >= len(script_execution_order):
+        # Current script is finished, check for next script
+        next_script_num = find_next_script(current_script_num)
+        if next_script_num:
+            current_script_num = next_script_num
+            parse_script_execution_order()
+            return get_next_script_message()
+        else:
+            script_completed = True
+            return None, None
+    
+    # Get the next character and message in sequence
+    character_name, message = script_execution_order[current_script_position]
+    current_script_position += 1
+    
+    return character_name, message
+
+def find_next_script(current_num: int) -> Optional[int]:
+    """Find the next available script number"""
+    available_scripts = sorted([num for num in conversation_scripts.keys() if conversation_scripts[num]])
+    for script_num in available_scripts:
+        if script_num > current_num:
+            return script_num
+    return None
+
+def get_account_for_character(character_name):
+    """Find which account is assigned to this character"""
+    for phone, char_name in script_characters.items():
+        if char_name == character_name:
+            return phone
+    return None
     
     # If we didn't find the character in the rest of current script,
     # try from the beginning of current script
@@ -231,10 +248,10 @@ def should_reply(phone: str):
     return False, None
 
 async def simulation_loop():
-    """Main simulation loop with forced reply mode"""
+    """Main simulation loop following exact script order"""
     global simulation_running, script_completed
     
-    print("🚀 Simulation started with forced reply mode")
+    print("🚀 Simulation started with exact script order")
     print(f"📊 Force reply mode: {'ON' if force_reply_mode else 'OFF'}")
     if destination_topic_id:
         print(f"💬 Topic ID: {destination_topic_id}")
@@ -267,89 +284,79 @@ async def simulation_loop():
             
             current_time = time.time()
             
-            # Process each account
+            # Get the next message from script in order
+            character_name, message_text = get_next_script_message()
+            
+            if script_completed:
+                print("✅ Script completed during message processing, stopping simulation")
+                simulation_running = False
+                break
+            
+            if not character_name or not message_text:
+                await asyncio.sleep(2)
+                continue
+            
+            # Find which account is assigned to this character
+            target_phone = get_account_for_character(character_name)
+            if not target_phone:
+                print(f"❌ No account assigned to character: {character_name}")
+                await asyncio.sleep(2)
+                continue
+            
+            # Find the client for this account
+            target_client = None
             for phone, client in active_accounts:
-                if not simulation_running:
+                if phone == target_phone:
+                    target_client = client
                     break
-                    
-                # Check timing
-                last_time = last_message_times.get(phone, 0)
-                if current_time - last_time < min_interval:
-                    continue
+            
+            if not target_client:
+                print(f"❌ Account {target_phone} not authorized or not found")
+                await asyncio.sleep(2)
+                continue
+            
+            # Check timing for this specific account
+            last_time = last_message_times.get(target_phone, 0)
+            if current_time - last_time < min_interval:
+                print(f"⏰ Waiting for {character_name}'s cooldown")
+                await asyncio.sleep(2)
+                continue
+            
+            print(f"🎯 Sending message as {character_name} ({target_phone})")
+            
+            # Determine if we should reply to previous message
+            reply_to_msg_id = None
+            if message_history and force_reply_mode:
+                # Reply to the last message in history
+                reply_to_msg_id = message_history[-1]['message_id']
+                print(f"💬 Replying to {message_history[-1]['sender_phone']}")
+            
+            # Send message
+            try:
+                result = await send_message_as_user(target_client, destination_group_identifier, message_text, reply_to_msg_id)
                 
-                print(f"🎯 Processing account: {phone}")
-                
-                # Decide if we should reply and to what
-                should_reply_flag, reply_to_message = should_reply(phone)
-                message = None
-                reply_to_msg_id = None
-                
-                if should_reply_flag and reply_to_message:
-                    # Get message for reply
-                    if current_script_num > 0 and not script_completed:
-                        message = get_next_script_message(phone)
+                if result:
+                    last_message_times[target_phone] = current_time
                     
-                    # If script is completed after getting message, stop
-                    if script_completed:
-                        print("✅ Script completed during message processing, stopping simulation")
-                        simulation_running = False
-                        break
+                    message_history.append({
+                        'message_id': result.id,
+                        'text': message_text,
+                        'sender_phone': target_phone,
+                        'timestamp': datetime.now()
+                    })
                     
-                    if not message:
-                        message = get_contextual_reply(phone, reply_to_message)
+                    if len(message_history) > 25:
+                        message_history.pop(0)
                     
-                    reply_to_msg_id = reply_to_message['message_id']
-                    print(f"💬 Replying to {reply_to_message['sender_phone']}")
-                else:
-                    # Only send new message if we have no history or very low chance
-                    if not message_history or random.random() < 0.1:
-                        if current_script_num > 0 and not script_completed:
-                            message = get_next_script_message(phone)
-                            
-                            # If script is completed after getting message, stop
-                            if script_completed:
-                                print("✅ Script completed during message processing, stopping simulation")
-                                simulation_running = False
-                                break
-                        
-                        if not message:
-                            character_name = script_characters.get(phone, "User")
-                            greetings = ["Hello everyone!", "Hey there!", "Hi all!", "Good to be here!"]
-                            message = random.choice(greetings)
+                    print(f"✅ {character_name} ({target_phone}): {message_text}")
                 
-                if not message:
-                    continue
-                
-                # Send message
-                try:
-                    result = await send_message_as_user(client, destination_group_identifier, message, reply_to_msg_id)
-                    
-                    if result:
-                        last_message_times[phone] = current_time
-                        
-                        message_history.append({
-                            'message_id': result.id,
-                            'text': message,
-                            'sender_phone': phone,
-                            'timestamp': datetime.now()
-                        })
-                        
-                        if len(message_history) > 25:
-                            message_history.pop(0)
-                        
-                        character = script_characters.get(phone, "User")
-                        if reply_to_msg_id:
-                            print(f"✅ {character} ({phone}) → {message}")
-                        else:
-                            print(f"✅ {character} ({phone}): {message}")
-                    
-                except Exception as e:
-                    print(f"❌ Failed to send from {phone}: {e}")
-                    last_message_times[phone] = current_time - 30
-                
-                # Wait based on number of accounts
-                wait_time = random.uniform(min_interval, max_interval) / max(1, len(active_accounts))
-                await asyncio.sleep(wait_time)
+            except Exception as e:
+                print(f"❌ Failed to send from {character_name} ({target_phone}): {e}")
+                last_message_times[target_phone] = current_time - 30
+            
+            # Wait before next message
+            wait_time = random.uniform(min_interval, max_interval)
+            await asyncio.sleep(wait_time)
                 
         except Exception as e:
             print(f"❌ Simulation error: {e}")
@@ -616,7 +623,7 @@ async def test_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Set script for any number (1-10)"""
-    global conversation_scripts, current_script_index, current_script_num, script_completed
+    global conversation_scripts, current_script_num, script_completed
     if not is_owner(update) or len(context.args) < 2:
         await update.message.reply_text("❌ Usage: /set_script <script_number(1-10)> <script_text>")
         return
@@ -642,6 +649,10 @@ async def set_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     conversation_scripts[script_num] = script_lines
     script_completed = False  # Reset completion status when new script is set
+    
+    # Parse execution order if this is the current script
+    if current_script_num == script_num or (current_script_num == 0 and script_num == 1):
+        parse_script_execution_order()
     
     await update.message.reply_text(f"✅ Script {script_num} loaded with {len(script_lines)} lines")
 
@@ -754,7 +765,7 @@ async def show_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 async def start_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global simulation_running, simulation_task, current_script_num, current_script_index, script_completed
+    global simulation_running, simulation_task, current_script_num, script_completed
     if not is_owner(update):
         return
     
@@ -779,12 +790,13 @@ async def start_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Find first available script
-    current_script_index = 0
     current_script_num = 0
     script_completed = False
     available_scripts = sorted([num for num in conversation_scripts.keys() if conversation_scripts[num]])
     if available_scripts:
         current_script_num = available_scripts[0]
+        # Parse the execution order when starting simulation
+        parse_script_execution_order()
     
     simulation_running = True
     simulation_task = asyncio.create_task(simulation_loop())
@@ -844,13 +856,22 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     script_counts = {num: len(script) for num, script in conversation_scripts.items() if script}
     script_info = ", ".join([f"Script{num}: {count} lines" for num, count in script_counts.items()])
     
+    # Calculate current position in script execution
+    script_position_info = ""
+    if current_script_num > 0 and script_execution_order:
+        total_lines = len(script_execution_order)
+        current_pos = current_script_position
+        progress = f"{current_pos}/{total_lines}"
+        script_position_info = f"Progress: {progress}"
+    
     status_text = (
         f"Accounts: {len(accounts)} (Authorized: {authorized_count})\n"
         f"Group: {destination_group_identifier or 'Not set'}\n"
         f"Topic ID: {destination_topic_id or 'Not set'}\n"
         f"Scripts: {script_info or 'No scripts'}\n"
-        f"Current Script: {current_script_num} (Position: {current_script_index})\n"
+        f"Current Script: {current_script_num}\n"
         f"Script Status: {'Completed' if script_completed else 'In progress' if current_script_num > 0 else 'Not started'}\n"
+        f"{script_position_info}\n"
         f"Characters: {len(script_characters)} assigned\n"
         f"Reply Mode: {'ON' if force_reply_mode else 'OFF'}\n"
         f"Interval: {min_interval}-{max_interval}s\n"
