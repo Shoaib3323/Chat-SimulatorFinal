@@ -18,10 +18,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
 # ===== CONFIGURATION =====
-API_ID = 26519036
-API_HASH = "a5375914a2ab92449b6970bf6d26665d"
-BOT_TOKEN = "8192774962:AAGYfF3nSUvUil3DT3qKfXpB7O6H5FGqNSo"
-OWNER_ID = 6084292028
+API_ID = 29884896
+API_HASH = "f9aa5b473013599e42aa4619bcf85a0a"
+BOT_TOKEN = "8406407573:AAG_EYa5dVTELpV6SWLYNkss95uf9YMxxBY"
+OWNER_ID = 5876736850
 
 # ===== GLOBAL STATE =====
 accounts: Dict[str, Tuple[str, TelegramClient]] = {}
