@@ -18,17 +18,17 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, filters
 
 # ===== CONFIGURATION =====
-API_ID = 20583673
-API_HASH = "4874dc139573317c2eebdb7b5936e72c"
-BOT_TOKEN = "8406407573:AAG_EYa5dVTELpV6SWLYNkss95uf9YMxxBY"
-OWNER_ID = 5876736850
+API_ID = 26519036
+API_HASH = "a5375914a2ab92449b6970bf6d26665d"
+BOT_TOKEN = "8192774962:AAGYfF3nSUvUil3DT3qKfXpB7O6H5FGqNSo"
+OWNER_ID = 6084292028
 
 # ===== GLOBAL STATE =====
 accounts: Dict[str, Tuple[str, TelegramClient]] = {}
 message_history: List[Dict] = []
 last_message_times: Dict[str, float] = {}
 destination_group_identifier = None
-destination_topic_id = None  # New: Store topic ID
+destination_topic_id = None
 destination_topic = "General chat"
 min_interval = 15
 max_interval = 60
@@ -36,17 +36,17 @@ simulation_running = False
 simulation_task = None
 
 # Script conversation system
-conversation_scripts = {}  # {script_num: script_lines}
-script_characters = {}  # {phone: character_name}
-script_execution_order = []  # List of (character_name, message) in script order
-current_script_position = 0  # Current position in script execution order
-current_script_num = 0  # 0 = no script
-script_completed = False  # Track if script has been completed
+conversation_scripts = {}
+script_characters = {}
+script_execution_order = []
+current_script_position = 0
+current_script_num = 0
+script_completed = False
 
 # Reply-only mode settings
-force_reply_mode = True  # Always reply to previous messages
-min_reply_chance = 80    # Minimum 80% chance to reply
-max_reply_chance = 100   # Maximum 100% chance to reply
+force_reply_mode = True
+min_reply_chance = 80
+max_reply_chance = 100
 
 def is_owner(update: Update) -> bool:
     return update.effective_user.id == OWNER_ID
@@ -57,23 +57,17 @@ async def send_message_as_user(client: TelegramClient, group_identifier: str, me
         entity = await client.get_entity(group_identifier)
         await asyncio.sleep(random.uniform(1.0, 2.0))
         
-        # Prepare send message parameters
         send_params = {
             'entity': entity,
             'message': message
         }
         
-        # Handle topic replies
         if destination_topic_id:
-            # For topics, we need to use the topic ID as reply_to
             if reply_to:
-                # If replying to a specific message within the topic
                 send_params['reply_to'] = reply_to
             else:
-                # If sending a new message to the topic
                 send_params['reply_to'] = destination_topic_id
         elif reply_to:
-            # Regular reply (no topic)
             send_params['reply_to'] = reply_to
             
         result = await client.send_message(**send_params)
@@ -81,15 +75,6 @@ async def send_message_as_user(client: TelegramClient, group_identifier: str, me
             
     except Exception as e:
         print(f"❌ Error sending message: {e}")
-        
-        # Specific error handling for topics
-        if "TOPIC_CLOSED" in str(e) or "TOPIC_DELETED" in str(e):
-            print("❌ Topic is closed or deleted. Try with a different topic ID.")
-        elif "CHAT_WRITE_FORBIDDEN" in str(e):
-            print("❌ No permission to write in this chat/topic.")
-        elif "PEER_ID_INVALID" in str(e):
-            print("❌ Invalid group or topic ID.")
-            
         raise
 
 def parse_script_execution_order():
@@ -114,7 +99,6 @@ def get_next_script_message():
     global current_script_position, current_script_num, script_completed
     
     if not script_execution_order or current_script_position >= len(script_execution_order):
-        # Current script is finished, check for next script
         next_script_num = find_next_script(current_script_num)
         if next_script_num:
             current_script_num = next_script_num
@@ -124,7 +108,6 @@ def get_next_script_message():
             script_completed = True
             return None, None
     
-    # Get the next character and message in sequence
     character_name, message = script_execution_order[current_script_position]
     current_script_position += 1
     
@@ -144,117 +127,12 @@ def get_account_for_character(character_name):
         if char_name == character_name:
             return phone
     return None
-    
-    # If we didn't find the character in the rest of current script,
-    # try from the beginning of current script
-    for i in range(0, current_script_index):
-        line = current_script[i]
-        if line.startswith(f"{character_name}:"):
-            current_script_index = i + 1
-            return line.split(":", 1)[1].strip()
-    
-    # Character not found in current script, try next script if available
-    next_script_num = find_next_script(current_script_num)
-    if next_script_num:
-        current_script_num = next_script_num
-        current_script_index = 0
-        script_completed = False
-        print(f"📜 Moving to script {current_script_num}")
-        return get_next_script_message(phone)
-    
-    # No more scripts and character not found
-    script_completed = True
-    return None
-
-def find_next_script(current_num: int) -> Optional[int]:
-    """Find the next available script number"""
-    available_scripts = sorted([num for num in conversation_scripts.keys() if conversation_scripts[num]])
-    for script_num in available_scripts:
-        if script_num > current_num:
-            return script_num
-    return None
-
-def get_contextual_reply(phone: str, last_message: Dict):
-    """Generate a contextual reply based on the last message"""
-    character_name = script_characters.get(phone, "User")
-    last_text = last_message['text'].lower()
-    last_sender = last_message['sender_phone']
-    
-    # Character-specific response styles
-    character_styles = {
-        "Alice": ["I agree with that", "That makes sense", "Good point!", "I think so too"],
-        "Bob": ["Interesting perspective", "I see what you mean", "That's a good way to look at it"],
-        "Charlie": ["I have a different thought", "What if we consider", "Another angle could be"],
-        "User": ["That's interesting", "I understand", "Thanks for sharing", "Good point"]
-    }
-    
-    # Response based on message content
-    if any(word in last_text for word in ['?', 'what', 'how', 'why', 'when', 'where']):
-        responses = [
-            "That's a good question",
-            "I've been wondering about that too",
-            "Let me think about that",
-            "Interesting point you raised"
-        ]
-    elif any(word in last_text for word in ['think', 'believe', 'opinion', 'feel']):
-        responses = [
-            "I agree with that perspective",
-            "That's a different way to look at it",
-            "I see what you mean",
-            "That makes sense"
-        ]
-    elif any(word in last_text for word in ['hi', 'hello', 'hey', 'greetings']):
-        responses = [
-            "Hey there!",
-            "Hello! How's it going?",
-            "Hi! Good to see you",
-            "Hey! What's up?"
-        ]
-    else:
-        responses = character_styles.get(character_name, character_styles["User"])
-    
-    return random.choice(responses)
-
-def should_reply(phone: str):
-    """Determine if this account should reply based on number of accounts"""
-    if not message_history:
-        return False, None
-    
-    # If script is completed, don't send any more messages
-    if script_completed:
-        return False, None
-    
-    # Get number of active accounts
-    active_accounts = [acc for acc in accounts.keys() if acc in [msg['sender_phone'] for msg in message_history[-10:]]]
-    num_active = len(active_accounts) if active_accounts else len(accounts)
-    
-    # Calculate reply chance based on number of accounts
-    # More accounts = higher chance to reply to keep conversation flowing
-    base_chance = min(max_reply_chance, max(min_reply_chance, 60 + (num_active * 10)))
-    reply_chance = random.randint(min_reply_chance, max_reply_chance)
-    
-    # Always reply if we have a script and it's our turn (and script is not completed)
-    if current_script_num > 0 and script_characters.get(phone) and not script_completed:
-        return True, message_history[-1] if message_history else None
-    
-    # Force reply mode or high chance
-    if force_reply_mode or reply_chance <= base_chance:
-        if message_history:
-            # Don't reply to ourselves
-            other_messages = [msg for msg in message_history if msg['sender_phone'] != phone]
-            if other_messages:
-                return True, other_messages[-1]
-    
-    return False, None
 
 async def simulation_loop():
     """Main simulation loop following exact script order"""
     global simulation_running, script_completed
     
     print("🚀 Simulation started with exact script order")
-    print(f"📊 Force reply mode: {'ON' if force_reply_mode else 'OFF'}")
-    if destination_topic_id:
-        print(f"💬 Topic ID: {destination_topic_id}")
     
     while simulation_running:
         try:
@@ -262,13 +140,11 @@ async def simulation_loop():
                 await asyncio.sleep(3)
                 continue
             
-            # Check if script is completed - stop simulation if true
             if script_completed:
                 print("✅ Script completed, stopping simulation")
                 simulation_running = False
                 break
             
-            # Get all authorized accounts
             active_accounts = []
             for phone, (session_str, client) in accounts.items():
                 try:
@@ -284,7 +160,6 @@ async def simulation_loop():
             
             current_time = time.time()
             
-            # Get the next message from script in order
             character_name, message_text = get_next_script_message()
             
             if script_completed:
@@ -296,14 +171,13 @@ async def simulation_loop():
                 await asyncio.sleep(2)
                 continue
             
-            # Find which account is assigned to this character
             target_phone = get_account_for_character(character_name)
             if not target_phone:
                 print(f"❌ No account assigned to character: {character_name}")
-                await asyncio.sleep(2)
-                continue
+                print(f"❌ Stopping simulation due to character assignment error")
+                simulation_running = False
+                break
             
-            # Find the client for this account
             target_client = None
             for phone, client in active_accounts:
                 if phone == target_phone:
@@ -315,7 +189,6 @@ async def simulation_loop():
                 await asyncio.sleep(2)
                 continue
             
-            # Check timing for this specific account
             last_time = last_message_times.get(target_phone, 0)
             if current_time - last_time < min_interval:
                 print(f"⏰ Waiting for {character_name}'s cooldown")
@@ -324,14 +197,11 @@ async def simulation_loop():
             
             print(f"🎯 Sending message as {character_name} ({target_phone})")
             
-            # Determine if we should reply to previous message
             reply_to_msg_id = None
             if message_history and force_reply_mode:
-                # Reply to the last message in history
                 reply_to_msg_id = message_history[-1]['message_id']
                 print(f"💬 Replying to {message_history[-1]['sender_phone']}")
             
-            # Send message
             try:
                 result = await send_message_as_user(target_client, destination_group_identifier, message_text, reply_to_msg_id)
                 
@@ -354,7 +224,6 @@ async def simulation_loop():
                 print(f"❌ Failed to send from {character_name} ({target_phone}): {e}")
                 last_message_times[target_phone] = current_time - 30
             
-            # Wait before next message
             wait_time = random.uniform(min_interval, max_interval)
             await asyncio.sleep(wait_time)
                 
@@ -414,7 +283,6 @@ async def add_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove an account from the bot"""
     if not is_owner(update) or not context.args:
         await update.message.reply_text("❌ Usage: /remove_account +1234567890")
         return
@@ -424,14 +292,12 @@ async def remove_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Account not found")
         return
     
-    # Disconnect client if connected
     session_str, client = accounts[phone]
     try:
         await client.disconnect()
     except:
         pass
     
-    # Remove from accounts and character assignments
     del accounts[phone]
     if phone in script_characters:
         del script_characters[phone]
@@ -474,7 +340,6 @@ async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     group_identifier = context.args[0].strip()
     topic_id = None
     
-    # Check if topic ID is provided
     if len(context.args) > 1:
         try:
             topic_id = int(context.args[1])
@@ -485,9 +350,7 @@ async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     destination_group_identifier = group_identifier
     destination_topic_id = topic_id
     
-    # Test the group connection and check topic support
     success = False
-    topic_supported = False
     group_name = "Unknown Group"
     
     for phone, (session_str, client) in accounts.items():
@@ -495,134 +358,21 @@ async def set_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if await client.is_user_authorized():
                 entity = await client.get_entity(destination_group_identifier)
                 group_name = getattr(entity, 'title', 'Unknown Group')
-                
-                # Check if this is a group that supports topics
-                if hasattr(entity, 'broadcast') or hasattr(entity, 'megagroup'):
-                    if entity.megagroup or getattr(entity, 'forum', False):
-                        topic_supported = True
-                        print(f"✅ Group {group_name} supports topics")
-                    else:
-                        print(f"⚠️ Group {group_name} may not support topics (not a supergroup/forum)")
-                
-                # Test sending a message (without actually sending)
-                if topic_id:
-                    # For topics, we need to verify the topic exists
-                    try:
-                        # Try to get forum topics
-                        if hasattr(entity, 'id'):
-                            result = await client(functions.channels.GetForumTopicsRequest(
-                                channel=entity,
-                                offset_date=None,
-                                offset_id=0,
-                                offset_topic=0,
-                                limit=100
-                            ))
-                            topic_exists = any(topic.id == topic_id for topic in result.topics)
-                            if not topic_exists:
-                                await update.message.reply_text(f"❌ Topic ID {topic_id} not found in group {group_name}")
-                                return
-                    except Exception as e:
-                        print(f"⚠️ Could not verify topic existence: {e}")
-                        # Continue anyway, as some groups might not allow topic listing
-                
                 success = True
                 break
-                
         except Exception as e:
-            print(f"❌ Error testing group connection for {phone}: {e}")
             continue
     
     if success:
         if destination_topic_id:
-            if topic_supported:
-                await update.message.reply_text(f"✅ Group set to: {group_name} with topic ID: {destination_topic_id}")
-            else:
-                await update.message.reply_text(f"⚠️ Group set to: {group_name} with topic ID: {destination_topic_id} but topic support is limited")
+            await update.message.reply_text(f"✅ Group set to: {group_name} with topic ID: {destination_topic_id}")
         else:
             await update.message.reply_text(f"✅ Group set to: {group_name} (no topic)")
     else:
-        await update.message.reply_text("❌ Could not connect to group. Make sure accounts have access and the group identifier is correct.")
-
-async def clear_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clear the topic setting"""
-    global destination_topic_id
-    destination_topic_id = None
-    await update.message.reply_text("✅ Topic cleared. Messages will be sent to general chat.")
-
-async def check_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Check available topics in the current group"""
-    if not is_owner(update):
-        return
-    
-    if not destination_group_identifier:
-        await update.message.reply_text("❌ No group set. Use /set_group first.")
-        return
-    
-    try:
-        for phone, (session_str, client) in accounts.items():
-            if await client.is_user_authorized():
-                entity = await client.get_entity(destination_group_identifier)
-                
-                if hasattr(entity, 'megagroup') and entity.megagroup:
-                    try:
-                        result = await client(functions.channels.GetForumTopicsRequest(
-                            channel=entity,
-                            offset_date=None,
-                            offset_id=0,
-                            offset_topic=0,
-                            limit=50
-                        ))
-                        
-                        if result.topics:
-                            topic_list = []
-                            for topic in result.topics:
-                                status = "✅ OPEN" if not topic.closed else "❌ CLOSED"
-                                topic_list.append(f"{topic.id}: {getattr(topic, 'title', 'Unknown')} {status}")
-                            
-                            response = f"📋 Topics in {getattr(entity, 'title', 'Group')}:\n" + "\n".join(topic_list)
-                            await update.message.reply_text(response)
-                        else:
-                            await update.message.reply_text("❌ No topics found or topics not supported in this group.")
-                        
-                    except Exception as e:
-                        await update.message.reply_text(f"❌ Error fetching topics: {e}")
-                else:
-                    await update.message.reply_text("❌ This group doesn't support topics (not a supergroup/forum).")
-                break
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-
-async def test_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Test sending a message to the current topic"""
-    if not is_owner(update):
-        return
-    
-    if not destination_group_identifier or not destination_topic_id:
-        await update.message.reply_text("❌ Group and topic must be set first.")
-        return
-    
-    try:
-        for phone, (session_str, client) in accounts.items():
-            if await client.is_user_authorized():
-                entity = await client.get_entity(destination_group_identifier)
-                
-                test_message = "🧪 Test message to verify topic functionality"
-                result = await client.send_message(
-                    entity=entity,
-                    message=test_message,
-                    reply_to=destination_topic_id
-                )
-                
-                if result:
-                    await update.message.reply_text(f"✅ Test message sent successfully to topic {destination_topic_id}")
-                else:
-                    await update.message.reply_text("❌ Failed to send test message")
-                break
-    except Exception as e:
-        await update.message.reply_text(f"❌ Test failed: {e}")
+        await update.message.reply_text("❌ Could not connect to group.")
 
 async def set_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set script for any number (1-10)"""
+    """Set script for any number (1-10) - FIXED multi-line parsing"""
     global conversation_scripts, current_script_num, script_completed
     if not is_owner(update) or len(context.args) < 2:
         await update.message.reply_text("❌ Usage: /set_script <script_number(1-10)> <script_text>")
@@ -637,37 +387,94 @@ async def set_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Script number must be a number between 1 and 10")
         return
     
-    script_text = " ".join(context.args[1:])
+    # Get the FULL message text including multi-line content
+    script_text = update.message.text
     
-    # Parse script lines
+    # Extract just the script part (remove the command)
+    command_pattern = f"/set_script {script_num}"
+    if script_text.startswith(command_pattern):
+        script_text = script_text[len(command_pattern):].strip()
+    
+    print(f"🔧 Debug: Full script text received ({len(script_text)} chars)")
+    print(f"Sample: {script_text[:200]}...")
+    
+    # Parse script lines - SIMPLE AND RELIABLE
     script_lines = []
-    lines = script_text.split('\n') if '\n' in script_text else script_text.split('.')
+    
+    # Split by lines and look for character: message patterns
+    lines = script_text.split('\n')
+    
     for line in lines:
         line = line.strip()
-        if line and ':' in line:
-            script_lines.append(line)
+        if not line:
+            continue
+            
+        # Look for character: message pattern
+        if ':' in line:
+            # Find the first colon (character separator)
+            colon_pos = line.find(':')
+            character = line[:colon_pos].strip()
+            message = line[colon_pos + 1:].strip()
+            
+            # Basic validation - character should be a single word
+            if (character and message and 
+                len(character) <= 20 and 
+                ' ' not in character and
+                character.isalpha()):
+                script_lines.append(f"{character}: {message}")
+                print(f"✅ Parsed: {character}: {message[:50]}...")
+    
+    # If we didn't find any valid lines, try alternative parsing
+    if not script_lines:
+        await update.message.reply_text("⚠️ Using alternative parsing...")
+        # Try splitting by common character names
+        characters = ['Halim', 'Kamal', 'Rajjaq']  # Add more character names as needed
+        for char in characters:
+            pattern = f"{char}:\\s*([^:]*)(?=\\s*(?:{'|'.join(characters)}):|$)"
+            matches = re.findall(pattern, script_text, re.IGNORECASE | re.DOTALL)
+            for match in matches:
+                if match.strip():
+                    script_lines.append(f"{char}: {match.strip()}")
     
     conversation_scripts[script_num] = script_lines
-    script_completed = False  # Reset completion status when new script is set
+    script_completed = False
     
-    # Parse execution order if this is the current script
     if current_script_num == script_num or (current_script_num == 0 and script_num == 1):
         parse_script_execution_order()
     
     await update.message.reply_text(f"✅ Script {script_num} loaded with {len(script_lines)} lines")
+    
+    # Show preview
+    if script_lines:
+        preview = "\n".join([f"{i+1}. {line}" for i, line in enumerate(script_lines[:5])])
+        if len(script_lines) > 5:
+            preview += f"\n... and {len(script_lines) - 5} more lines"
+        await update.message.reply_text(f"📋 Preview:\n{preview}")
+        
+        # Check character assignments
+        characters_in_script = set()
+        for line in script_lines:
+            if ':' in line:
+                character = line.split(':', 1)[0].strip()
+                characters_in_script.add(character)
+        
+        assigned_characters = set(script_characters.values())
+        missing_assignments = characters_in_script - assigned_characters
+        
+        if missing_assignments:
+            await update.message.reply_text(f"⚠️ Missing character assignments: {', '.join(missing_assignments)}")
+            await update.message.reply_text("❌ Simulation will stop if these characters are encountered!")
 
 async def clear_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clear specific script or all scripts"""
-    global conversation_scripts, current_script_num, current_script_index, script_completed
+    global conversation_scripts, current_script_num, current_script_position, script_completed
     
     if not is_owner(update):
         return
     
     if not context.args:
-        # Clear all scripts
         conversation_scripts.clear()
         current_script_num = 0
-        current_script_index = 0
+        current_script_position = 0
         script_completed = False
         await update.message.reply_text("✅ All scripts cleared")
         return
@@ -677,10 +484,9 @@ async def clear_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if script_num in conversation_scripts:
             del conversation_scripts[script_num]
             
-            # If we're currently using this script, reset to no script
             if current_script_num == script_num:
                 current_script_num = 0
-                current_script_index = 0
+                current_script_position = 0
                 script_completed = False
             
             await update.message.reply_text(f"✅ Script {script_num} cleared")
@@ -728,10 +534,10 @@ async def reply_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode = context.args[0].lower()
     if mode in ['on', 'yes', 'true', '1']:
         force_reply_mode = True
-        await update.message.reply_text("✅ Reply mode: ON - Accounts will always reply to each other")
+        await update.message.reply_text("✅ Reply mode: ON")
     elif mode in ['off', 'no', 'false', '0']:
         force_reply_mode = False
-        await update.message.reply_text("✅ Reply mode: OFF - Accounts may send standalone messages")
+        await update.message.reply_text("✅ Reply mode: OFF")
     else:
         await update.message.reply_text("❌ Use: /reply_mode <on/off>")
 
@@ -755,12 +561,8 @@ async def show_script(update: Update, context: ContextTypes.DEFAULT_TYPE):
     character_assignments = "\n".join([f"{phone} -> {char}" for phone, char in script_characters.items()])
     
     response += f"🎭 Character Assignments:\n{character_assignments if character_assignments else 'None'}\n\n"
-    response += f"🔗 Reply Mode: {'ON' if force_reply_mode else 'OFF'}\n"
-    response += f"📖 Current Script: {current_script_num} (0 = no script)\n"
+    response += f"📖 Current Script: {current_script_num}\n"
     response += f"📝 Script Status: {'Completed' if script_completed else 'In progress' if current_script_num > 0 else 'Not started'}"
-    
-    if destination_topic_id:
-        response += f"\n💬 Active Topic ID: {destination_topic_id}"
     
     await update.message.reply_text(response)
 
@@ -789,25 +591,17 @@ async def start_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No authorized accounts")
         return
     
-    # Find first available script
     current_script_num = 0
     script_completed = False
     available_scripts = sorted([num for num in conversation_scripts.keys() if conversation_scripts[num]])
     if available_scripts:
         current_script_num = available_scripts[0]
-        # Parse the execution order when starting simulation
         parse_script_execution_order()
     
     simulation_running = True
     simulation_task = asyncio.create_task(simulation_loop())
     
-    mode_status = "with forced replies" if force_reply_mode else "with natural conversation"
-    script_status = f"using script {current_script_num}" if current_script_num > 0 else "without script"
-    topic_status = f"in topic {destination_topic_id}" if destination_topic_id else "in general chat"
-    
-    await update.message.reply_text(
-        f"✅ Simulation started with {authorized_count} accounts {mode_status} {script_status} {topic_status}!"
-    )
+    await update.message.reply_text(f"✅ Simulation started with {authorized_count} accounts!")
 
 async def stop_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global simulation_running, simulation_task
@@ -838,7 +632,6 @@ async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
         account_list.append(f"• {phone} - {status} - Character: {character}")
     
     response = "📱 Accounts:\n" + "\n".join(account_list)
-    response += f"\n\nUse /remove_account <phone> to remove an account"
     await update.message.reply_text(response)
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -856,32 +649,19 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     script_counts = {num: len(script) for num, script in conversation_scripts.items() if script}
     script_info = ", ".join([f"Script{num}: {count} lines" for num, count in script_counts.items()])
     
-    # Calculate current position in script execution
-    script_position_info = ""
-    if current_script_num > 0 and script_execution_order:
-        total_lines = len(script_execution_order)
-        current_pos = current_script_position
-        progress = f"{current_pos}/{total_lines}"
-        script_position_info = f"Progress: {progress}"
-    
     status_text = (
         f"Accounts: {len(accounts)} (Authorized: {authorized_count})\n"
         f"Group: {destination_group_identifier or 'Not set'}\n"
-        f"Topic ID: {destination_topic_id or 'Not set'}\n"
         f"Scripts: {script_info or 'No scripts'}\n"
         f"Current Script: {current_script_num}\n"
-        f"Script Status: {'Completed' if script_completed else 'In progress' if current_script_num > 0 else 'Not started'}\n"
-        f"{script_position_info}\n"
         f"Characters: {len(script_characters)} assigned\n"
-        f"Reply Mode: {'ON' if force_reply_mode else 'OFF'}\n"
-        f"Interval: {min_interval}-{max_interval}s\n"
         f"Running: {simulation_running}"
     )
     await update.message.reply_text(status_text)
 
 # ===== MAIN =====
 async def main():
-    print("🤖 Starting Telegram Chat Bot with Enhanced Features...")
+    print("🤖 Starting Telegram Chat Simulator Bot...")
     application = Application.builder().token(BOT_TOKEN).build()
     
     # Add command handlers
@@ -890,9 +670,6 @@ async def main():
     application.add_handler(CommandHandler("remove_account", remove_account))
     application.add_handler(CommandHandler("login", login_account))
     application.add_handler(CommandHandler("set_group", set_group))
-    application.add_handler(CommandHandler("clear_topic", clear_topic))
-    application.add_handler(CommandHandler("check_topics", check_topics))
-    application.add_handler(CommandHandler("test_topic", test_topic))
     application.add_handler(CommandHandler("set_script", set_script))
     application.add_handler(CommandHandler("clear_script", clear_script))
     application.add_handler(CommandHandler("assign_character", assign_character))
